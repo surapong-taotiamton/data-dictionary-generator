@@ -1,5 +1,7 @@
 package com.example.dataDictionary;
 //import io.r2dbc.spi.ColumnMetadata;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -13,6 +15,9 @@ import java.util.Map;
 
 @Controller
 public class DatabaseController {
+    
+    
+    private static final Logger logger = LoggerFactory.getLogger(DatabaseController.class);
 
     @PostMapping("/upload")
     public ResponseEntity<byte[]> handleFormSubmission(@RequestParam("username") String username,
@@ -57,7 +62,16 @@ public class DatabaseController {
                                 String columnDefault = columnsResultSet.getString("COLUMN_DEFAULT");
                                 String comment = columnsResultSet.getString("COLUMN_COMMENT");
 
-                                String[] rowData = {columnName, columnType, isNullable, columnDefault, comment};
+                                List<String> keyType = new ArrayList<>();
+                                if ( "PRI".equals(columnKey) ) {
+                                    keyType.add("PK");
+                                }
+
+                                if (isFk(connection, database, tableName, columnName)) {
+                                    keyType.add("FK");
+                                }
+
+                                String[] rowData = {columnName, columnType, isNullable, columnDefault, String.join(",", keyType), comment};
 
                                 tableDataMap.computeIfAbsent(tableName, k -> new ArrayList<>()).add(rowData);
                             }
@@ -85,7 +99,7 @@ public class DatabaseController {
 
                                 tableData[i][0][0] = "Table : "+ tableName;
 
-                                String[] headers = {"COLUMN", "TYPE", "NULL", "DEFAULT", "COMMENT"};
+                                String[] headers = {"COLUMN", "TYPE", "NULL", "DEFAULT", "KEY", "COMMENT"};
                                 tableData[i][1] = headers;
 
                                 for (int j = 0; j < rowDataList.size(); j++) {
@@ -105,4 +119,39 @@ public class DatabaseController {
         }
         return ResponseEntity.internalServerError().build();
     }
+
+    private boolean isFk(Connection connection, String dbName, String tableName, String columnName) throws SQLException {
+
+        String query = "SELECT\n" +
+                "    TABLE_NAME,\n" +
+                "    COLUMN_NAME,\n" +
+                "    CONSTRAINT_NAME,\n" +
+                "    REFERENCED_TABLE_NAME,\n" +
+                "    REFERENCED_COLUMN_NAME\n" +
+                "FROM\n" +
+                "    INFORMATION_SCHEMA.KEY_COLUMN_USAGE\n" +
+                "WHERE\n" +
+                "\tREFERENCED_TABLE_SCHEMA = ?\n" +
+                "    AND TABLE_NAME = ?\n" +
+                "    AND COLUMN_NAME = ? ";
+
+        try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+
+            preparedStatement.setString(1, dbName);
+            preparedStatement.setString(2, tableName);
+            preparedStatement.setString(3, columnName);
+
+            ResultSet resultSet = preparedStatement.executeQuery();
+
+            if (resultSet.next()) {
+                String resultTableName = resultSet.getString(1);
+                logger.debug("check fk resultTableName : {}", resultTableName);
+                return true;
+            } else {
+                return false;
+            }
+        }
+    }
+
+
 }
